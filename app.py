@@ -11,10 +11,10 @@ import plotly.graph_objs as go
 import paho.mqtt.client as mqtt
 
 # ===========================================
-# CONFIG MQTT & TOPICS (MENYESUAIKAN ESP32)
+# MQTT CONFIG UNTUK STREAMLIT CLOUD (WEBSOCKET)
 # ===========================================
 MQTT_BROKER = "broker.hivemq.com"
-MQTT_PORT = 8000
+MQTT_PORT = 8000    # HARUS 8000 UNTUK STREAMLIT CLOUD (WEBSOCKET MQTT)
 
 TOPIC_SUHU       = "smuhsa/gudang/suhu"
 TOPIC_KELEMBAPAN = "smuhsa/gudang/kelembapan"
@@ -29,29 +29,29 @@ ALL_TOPICS = [
     TOPIC_STATUS, TOPIC_PINTU, TOPIC_LOG
 ]
 
-# optional model path
 MODEL_PATH = "iot_temp_model.pkl"
-
-# timezone Indonesia GMT+7
 TZ = timezone(timedelta(hours=7))
 
 
 # ===========================================
-# GLOBAL QUEUE (PENTING)
+# GLOBAL QUEUE
 # ===========================================
 GLOBAL_MQ = queue.Queue()
 
 
 # ===========================================
-# UI SETUP
+# STREAMLIT UI SETUP
 # ===========================================
-st.set_page_config(page_title="IoT Gudang — Dashboard", layout="wide")
+st.set_page_config(page_title="IoT Smart Gudang", layout="wide")
 st.title("📡 IoT Smart Gudang — Realtime Dashboard")
 
 
 # ===========================================
 # INIT SESSION STATE
 # ===========================================
+if "connected" not in st.session_state:
+    st.session_state.connected = False
+
 if "logs" not in st.session_state:
     st.session_state.logs = []
 
@@ -64,14 +64,6 @@ if "last" not in st.session_state:
         "pintu": None,
         "log": None
     }
-
-if "ml_model" not in st.session_state:
-    try:
-        st.session_state.ml_model = joblib.load(MODEL_PATH)
-        st.success("ML Model Loaded")
-    except:
-        st.session_state.ml_model = None
-        st.info("Model ML tidak ditemukan (opsional).")
 
 
 # ===========================================
@@ -87,25 +79,25 @@ def on_connect(client, userdata, flags, rc):
 
 
 def on_message(client, userdata, msg):
-    topic = msg.topic
     payload = msg.payload.decode()
 
     GLOBAL_MQ.put({
         "_type": "sensor",
-        "topic": topic,
+        "topic": msg.topic,
         "value": payload,
         "ts": time.time()
     })
 
 
 # ===========================================
-# MQTT WORKER THREAD
+# MQTT WORKER THREAD (WEBSOCKET)
 # ===========================================
 def start_mqtt_thread():
     def worker():
-        client = mqtt.Client()
+        client = mqtt.Client(transport="websockets")   # WAJIB UNTUK STREAMLIT CLOUD
         client.on_connect = on_connect
         client.on_message = on_message
+
         while True:
             try:
                 client.connect(MQTT_BROKER, MQTT_PORT, 60)
@@ -117,77 +109,67 @@ def start_mqtt_thread():
     threading.Thread(target=worker, daemon=True).start()
 
 
-# run worker
 start_mqtt_thread()
 
 
 # ===========================================
-# HANDLE INCOMING MESSAGES
+# PROSES DATA MASUK
 # ===========================================
 def process_queue():
-    updated = False
     while not GLOBAL_MQ.empty():
         item = GLOBAL_MQ.get()
-        t = item.get("_type")
+        t = item["_type"]
 
         if t == "status":
             st.session_state.connected = item["connected"]
 
         elif t == "sensor":
             topic = item["topic"]
-            val = item["value"]
+            value = item["value"]
 
             if topic == TOPIC_SUHU:
-                st.session_state.last["suhu"] = float(val)
+                st.session_state.last["suhu"] = float(value)
 
             elif topic == TOPIC_KELEMBAPAN:
-                st.session_state.last["lembap"] = float(val)
+                st.session_state.last["lembap"] = float(value)
 
             elif topic == TOPIC_LDR:
-                st.session_state.last["ldr"] = int(val)
+                st.session_state.last["ldr"] = int(value)
 
             elif topic == TOPIC_STATUS:
-                st.session_state.last["status"] = val
+                st.session_state.last["status"] = value
 
             elif topic == TOPIC_PINTU:
-                st.session_state.last["pintu"] = val
+                st.session_state.last["pintu"] = value
 
             elif topic == TOPIC_LOG:
-                st.session_state.last["log"] = val
+                st.session_state.last["log"] = value
 
-            # simpan satu row lengkap jika suhu & lembap sudah masuk
-            if st.session_state.last["suhu"] is not None:
-                row = dict(st.session_state.last)
-                row["ts"] = datetime.fromtimestamp(item["ts"], TZ).strftime("%H:%M:%S")
-                st.session_state.logs.append(row)
+            # Simpan log lengkap
+            row = dict(st.session_state.last)
+            row["ts"] = datetime.fromtimestamp(item["ts"], TZ).strftime("%H:%M:%S")
+            st.session_state.logs.append(row)
 
-                if len(st.session_state.logs) > 2000:
-                    st.session_state.logs = st.session_state.logs[-2000:]
-
-            updated = True
-
-    return updated
+            if len(st.session_state.logs) > 2000:
+                st.session_state.logs = st.session_state.logs[-2000:]
 
 
-# proses awal
 process_queue()
 
 
 # ===========================================
-# UI — LEFT PANEL
+# UI LEFT PANEL
 # ===========================================
 left, right = st.columns([1, 2])
 
 with left:
-    st.subheader(" Connection")
-    status = st.session_state.get("connected", False)
-    st.metric("MQTT Connected", "Yes" if status else "No")
+    st.subheader("⚡ Connection")
+    st.metric("MQTT Connected", "YES" if st.session_state.connected else "NO")
 
     st.markdown("---")
-
-    st.subheader(" Last Data")
     last = st.session_state.last
 
+    st.subheader("📊 Last Data")
     st.write(f"**Suhu**: {last['suhu']} °C")
     st.write(f"**Kelembapan**: {last['lembap']} %")
     st.write(f"**LDR**: {last['ldr']}")
@@ -196,23 +178,23 @@ with left:
     st.write(f"**Log**: {last['log']}")
 
     st.markdown("---")
-    st.subheader(" Manual LED Control")
+    st.subheader("💡 LED Control")
 
     col1, col2 = st.columns(2)
-    if col1.button("LED_ON"):
-        pub = mqtt.Client()
-        pub.connect(MQTT_BROKER, MQTT_PORT)
+    if col1.button("LED ON"):
+        pub = mqtt.Client(transport="websockets")
+        pub.connect(MQTT_BROKER, MQTT_PORT, 60)
         pub.publish(TOPIC_KONTROL, "LED_ON")
         pub.disconnect()
 
-    if col2.button("LED_OFF"):
-        pub = mqtt.Client()
-        pub.connect(MQTT_BROKER, MQTT_PORT)
+    if col2.button("LED OFF"):
+        pub = mqtt.Client(transport="websockets")
+        pub.connect(MQTT_BROKER, MQTT_PORT, 60)
         pub.publish(TOPIC_KONTROL, "LED_OFF")
         pub.disconnect()
 
     st.markdown("---")
-    st.subheader("Download Logs")
+    st.subheader("⬇ Download Logs")
 
     if st.button("Download CSV"):
         if len(st.session_state.logs) > 0:
@@ -224,10 +206,10 @@ with left:
 
 
 # ===========================================
-# UI — RIGHT PANEL (CHART)
+# UI RIGHT PANEL (CHART)
 # ===========================================
 with right:
-    st.subheader(" Live Chart — Suhu & Lembap")
+    st.subheader("📈 Live Chart")
 
     df = pd.DataFrame(st.session_state.logs[-200:])
 
@@ -238,15 +220,16 @@ with right:
 
         fig.update_layout(
             height=500,
-            yaxis=dict(title="Suhu (°C)"),
-            yaxis2=dict(title="Kelembapan (%)", overlaying="y", side="right")
+            yaxis=dict(title="Suhu °C"),
+            yaxis2=dict(title="Kelembapan %", overlaying="y", side="right")
         )
 
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Menunggu data dari ESP32...")
 
-    st.subheader("Recent Logs")
+    st.subheader("📝 Recent Logs")
     st.dataframe(df[::-1])
+
 
 process_queue()

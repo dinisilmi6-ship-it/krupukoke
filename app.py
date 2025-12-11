@@ -43,7 +43,7 @@ GLOBAL_MQ = queue.Queue()
 # STREAMLIT UI SETUP
 # ===========================================
 st.set_page_config(page_title="IoT Smart Gudang", layout="wide")
-st.title("📡 IoT Smart Gudang — Realtime Dashboard")
+st.title(" IoT Smart Gudang — Realtime Dashboard")
 
 
 # ===========================================
@@ -163,13 +163,13 @@ process_queue()
 left, right = st.columns([1, 2])
 
 with left:
-    st.subheader("⚡ Connection")
+    st.subheader(" Connection")
     st.metric("MQTT Connected", "YES" if st.session_state.connected else "NO")
 
     st.markdown("---")
     last = st.session_state.last
 
-    st.subheader("📊 Last Data")
+    st.subheader(" Last Data")
     st.write(f"**Suhu**: {last['suhu']} °C")
     st.write(f"**Kelembapan**: {last['lembap']} %")
     st.write(f"**LDR**: {last['ldr']}")
@@ -178,7 +178,7 @@ with left:
     st.write(f"**Log**: {last['log']}")
 
     st.markdown("---")
-    st.subheader("💡 LED Control")
+    st.subheader(" LED Control")
 
     col1, col2 = st.columns(2)
     if col1.button("LED ON"):
@@ -209,7 +209,7 @@ with left:
 # UI RIGHT PANEL (CHART)
 # ===========================================
 with right:
-    st.subheader("📈 Live Chart")
+    st.subheader(" Live Chart")
 
     df = pd.DataFrame(st.session_state.logs[-200:])
 
@@ -228,7 +228,7 @@ with right:
     else:
         st.info("Menunggu data dari ESP32...")
 
-    st.subheader("📝 Recent Logs")
+    st.subheader(" Recent Logs")
     st.dataframe(df[::-1])
 
 

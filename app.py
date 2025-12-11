@@ -14,7 +14,7 @@ import paho.mqtt.client as mqtt
 # CONFIG MQTT & TOPICS (MENYESUAIKAN ESP32)
 # ===========================================
 MQTT_BROKER = "broker.hivemq.com"
-MQTT_PORT = 1883
+MQTT_PORT = 8000
 
 TOPIC_SUHU       = "smuhsa/gudang/suhu"
 TOPIC_KELEMBAPAN = "smuhsa/gudang/kelembapan"

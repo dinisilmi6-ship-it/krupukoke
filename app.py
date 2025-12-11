@@ -10,12 +10,11 @@ from datetime import datetime, timezone, timedelta
 import plotly.graph_objs as go
 import paho.mqtt.client as mqtt
 
-# ===========================================
-# MQTT CONFIG UNTUK STREAMLIT CLOUD (WEBSOCKET)
-# ===========================================
-MQTT_BROKER = "broker.hivemq.com"
-MQTT_PORT = 8000    # HARUS 8000 UNTUK STREAMLIT CLOUD (WEBSOCKET MQTT)
-
+# ---------------------------
+# CONFIG MQTT
+# ---------------------------
+MQTT_BROKER = "broker.emqx.io"   # EMQX gratis WebSocket broker
+MQTT_PORT = 8083                 # WebSocket port
 TOPIC_SUHU       = "smuhsa/gudang/suhu"
 TOPIC_KELEMBAPAN = "smuhsa/gudang/kelembapan"
 TOPIC_LDR        = "smuhsa/gudang/ldr"
@@ -32,23 +31,20 @@ ALL_TOPICS = [
 MODEL_PATH = "iot_temp_model.pkl"
 TZ = timezone(timedelta(hours=7))
 
-
-# ===========================================
+# ---------------------------
 # GLOBAL QUEUE
-# ===========================================
+# ---------------------------
 GLOBAL_MQ = queue.Queue()
 
-
-# ===========================================
-# STREAMLIT UI SETUP
-# ===========================================
+# ---------------------------
+# STREAMLIT UI
+# ---------------------------
 st.set_page_config(page_title="IoT Smart Gudang", layout="wide")
 st.title(" IoT Smart Gudang — Realtime Dashboard")
 
-
-# ===========================================
+# ---------------------------
 # INIT SESSION STATE
-# ===========================================
+# ---------------------------
 if "connected" not in st.session_state:
     st.session_state.connected = False
 
@@ -62,13 +58,48 @@ if "last" not in st.session_state:
         "ldr": None,
         "status": None,
         "pintu": None,
-        "log": None
+        "log": None,
+        "pred": None,
+        "conf": None,
+        "anomaly": None
     }
 
+if "ml_model" not in st.session_state:
+    st.session_state.ml_model = None
 
-# ===========================================
+# ---------------------------
+# LOAD ML MODEL (optional)
+# ---------------------------
+@st.cache_resource
+def load_ml_model(path):
+    try:
+        return joblib.load(path)
+    except Exception as e:
+        st.warning(f"ML model not loaded: {e}")
+        return None
+
+st.session_state.ml_model = load_ml_model(MODEL_PATH)
+
+def model_predict_label_and_conf(temp, hum):
+    model = st.session_state.ml_model
+    if model is None:
+        return ("N/A", None)
+    X = [[float(temp), float(hum)]]
+    try:
+        label = model.predict(X)[0]
+    except Exception:
+        label = "ERR"
+    prob = None
+    if hasattr(model, "predict_proba"):
+        try:
+            prob = float(np.max(model.predict_proba(X)))
+        except Exception:
+            prob = None
+    return label, prob
+
+# ---------------------------
 # MQTT CALLBACKS
-# ===========================================
+# ---------------------------
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
         GLOBAL_MQ.put({"_type": "status", "connected": True})
@@ -77,10 +108,8 @@ def on_connect(client, userdata, flags, rc):
     else:
         GLOBAL_MQ.put({"_type": "status", "connected": False})
 
-
 def on_message(client, userdata, msg):
     payload = msg.payload.decode()
-
     GLOBAL_MQ.put({
         "_type": "sensor",
         "topic": msg.topic,
@@ -88,16 +117,14 @@ def on_message(client, userdata, msg):
         "ts": time.time()
     })
 
-
-# ===========================================
-# MQTT WORKER THREAD (WEBSOCKET)
-# ===========================================
+# ---------------------------
+# MQTT WORKER THREAD (WebSocket)
+# ---------------------------
 def start_mqtt_thread():
     def worker():
-        client = mqtt.Client(transport="websockets")   # WAJIB UNTUK STREAMLIT CLOUD
+        client = mqtt.Client(transport="websockets")
         client.on_connect = on_connect
         client.on_message = on_message
-
         while True:
             try:
                 client.connect(MQTT_BROKER, MQTT_PORT, 60)
@@ -105,16 +132,13 @@ def start_mqtt_thread():
             except Exception as e:
                 GLOBAL_MQ.put({"_type": "error", "msg": str(e)})
                 time.sleep(2)
-
     threading.Thread(target=worker, daemon=True).start()
-
 
 start_mqtt_thread()
 
-
-# ===========================================
-# PROSES DATA MASUK
-# ===========================================
+# ---------------------------
+# PROCESS INCOMING QUEUE
+# ---------------------------
 def process_queue():
     while not GLOBAL_MQ.empty():
         item = GLOBAL_MQ.get()
@@ -127,109 +151,8 @@ def process_queue():
             topic = item["topic"]
             value = item["value"]
 
+            # update last data
+            last = st.session_state.last
+
             if topic == TOPIC_SUHU:
-                st.session_state.last["suhu"] = float(value)
-
-            elif topic == TOPIC_KELEMBAPAN:
-                st.session_state.last["lembap"] = float(value)
-
-            elif topic == TOPIC_LDR:
-                st.session_state.last["ldr"] = int(value)
-
-            elif topic == TOPIC_STATUS:
-                st.session_state.last["status"] = value
-
-            elif topic == TOPIC_PINTU:
-                st.session_state.last["pintu"] = value
-
-            elif topic == TOPIC_LOG:
-                st.session_state.last["log"] = value
-
-            # Simpan log lengkap
-            row = dict(st.session_state.last)
-            row["ts"] = datetime.fromtimestamp(item["ts"], TZ).strftime("%H:%M:%S")
-            st.session_state.logs.append(row)
-
-            if len(st.session_state.logs) > 2000:
-                st.session_state.logs = st.session_state.logs[-2000:]
-
-
-process_queue()
-
-
-# ===========================================
-# UI LEFT PANEL
-# ===========================================
-left, right = st.columns([1, 2])
-
-with left:
-    st.subheader(" Connection")
-    st.metric("MQTT Connected", "YES" if st.session_state.connected else "NO")
-
-    st.markdown("---")
-    last = st.session_state.last
-
-    st.subheader(" Last Data")
-    st.write(f"**Suhu**: {last['suhu']} °C")
-    st.write(f"**Kelembapan**: {last['lembap']} %")
-    st.write(f"**LDR**: {last['ldr']}")
-    st.write(f"**Status Cahaya**: {last['status']}")
-    st.write(f"**Status Pintu**: {last['pintu']}")
-    st.write(f"**Log**: {last['log']}")
-
-    st.markdown("---")
-    st.subheader(" LED Control")
-
-    col1, col2 = st.columns(2)
-    if col1.button("LED ON"):
-        pub = mqtt.Client(transport="websockets")
-        pub.connect(MQTT_BROKER, MQTT_PORT, 60)
-        pub.publish(TOPIC_KONTROL, "LED_ON")
-        pub.disconnect()
-
-    if col2.button("LED OFF"):
-        pub = mqtt.Client(transport="websockets")
-        pub.connect(MQTT_BROKER, MQTT_PORT, 60)
-        pub.publish(TOPIC_KONTROL, "LED_OFF")
-        pub.disconnect()
-
-    st.markdown("---")
-    st.subheader("⬇ Download Logs")
-
-    if st.button("Download CSV"):
-        if len(st.session_state.logs) > 0:
-            df = pd.DataFrame(st.session_state.logs)
-            csv = df.to_csv(index=False).encode()
-            st.download_button("Klik untuk download", csv, "log_gudang.csv")
-        else:
-            st.info("Belum ada data")
-
-
-# ===========================================
-# UI RIGHT PANEL (CHART)
-# ===========================================
-with right:
-    st.subheader(" Live Chart")
-
-    df = pd.DataFrame(st.session_state.logs[-200:])
-
-    if not df.empty:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df["ts"], y=df["suhu"], mode="lines+markers", name="Suhu"))
-        fig.add_trace(go.Scatter(x=df["ts"], y=df["lembap"], mode="lines+markers", name="Lembap", yaxis="y2"))
-
-        fig.update_layout(
-            height=500,
-            yaxis=dict(title="Suhu °C"),
-            yaxis2=dict(title="Kelembapan %", overlaying="y", side="right")
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Menunggu data dari ESP32...")
-
-    st.subheader(" Recent Logs")
-    st.dataframe(df[::-1])
-
-
-process_queue()
+                last["suhu]()

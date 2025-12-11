@@ -179,13 +179,13 @@ process_queue()
 left, right = st.columns([1, 2])
 
 with left:
-    st.subheader("📶 Connection")
+    st.subheader(" Connection")
     status = st.session_state.get("connected", False)
     st.metric("MQTT Connected", "Yes" if status else "No")
 
     st.markdown("---")
 
-    st.subheader("📍 Last Data")
+    st.subheader(" Last Data")
     last = st.session_state.last
 
     st.write(f"**Suhu**: {last['suhu']} °C")
@@ -196,7 +196,7 @@ with left:
     st.write(f"**Log**: {last['log']}")
 
     st.markdown("---")
-    st.subheader("🔧 Manual LED Control")
+    st.subheader(" Manual LED Control")
 
     col1, col2 = st.columns(2)
     if col1.button("LED_ON"):
@@ -227,7 +227,7 @@ with left:
 # UI — RIGHT PANEL (CHART)
 # ===========================================
 with right:
-    st.subheader("📊 Live Chart — Suhu & Lembap")
+    st.subheader(" Live Chart — Suhu & Lembap")
 
     df = pd.DataFrame(st.session_state.logs[-200:])
 
